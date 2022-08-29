@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+test ! -n "${ZETS}"  && echo "ZETS not set" && exit 1;
+test ! -n "${1}"  && echo "usage: newzet <name>" && exit 1;
+
+path="${ZETS}/${1}"
+
+if [ -e "${path}" ]; then
+  read -p "${1} already exists. Edit? " yes
+  case "${yes}" in
+    y|yes|yep|yeppers|yeah|ok|okay) exec cd "${path}" && vim README.md
+  esac
+  exit 0
+fi
+
+mkdir "${path}"
+cd "${path}" 
+exec vim README.md 
