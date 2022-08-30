@@ -6,7 +6,7 @@ if test -n "$1"; then
 fi
 
 IFS=$'\n'
-html=($(tail -"${count}" ~/.lynx_bookmarks.html | pandoc -f html -t markdown --wrap=none))
+html=($(tail -"${count}" ~/lynx_bookmarks.html | pandoc -f html -t markdown --wrap=none))
 
 for line in ${html[@]}; do
    [[ $line =~ ^\[(.+)\]\((.+)\) ]]
