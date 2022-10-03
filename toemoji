@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-#!/usr/bin/env bash
-
 declare -A emoji
 emoji[smile]=😃
 emoji[bear]=🐻
@@ -19,6 +17,9 @@ emoji[update]=📰
 emoji[tux]=🐧
 emoji[tux]=🐧
 emoji[facepalm]=🤦
+emoji[puke]=🤢
+emoji[skull]=💀
+emoji[wizard]=🧙
 
 toemoji() {
   local in=/dev/stdin

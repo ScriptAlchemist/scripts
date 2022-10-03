@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+count=1
+if test -n "$1"; then
+    count="$1"
+fi
+
+IFS=$'\n'
+html=($(tail -"${count}" ~/lynx_bookmarks.html | pandoc -f html -t markdown --wrap=none))
+
+while IFS= read -r line_outer; do
+  for line in ${html[@]}; do
+     [[ $line =~ ^\[(.+)\]\((.+)\) ]]
+     echo "$line_outer[${BASH_REMATCH[1]}](${BASH_REMATCH[2]})"
+  done
+done
