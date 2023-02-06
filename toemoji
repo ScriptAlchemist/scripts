@@ -20,6 +20,10 @@ emoji[facepalm]=🤦
 emoji[puke]=🤢
 emoji[skull]=💀
 emoji[wizard]=🧙
+emoji[redX]=❌
+emoji[checkmark]=✅
+emoji[clock]=⏰
+emoji[blueCircle]=🔵
 
 toemoji() {
   local in=/dev/stdin
