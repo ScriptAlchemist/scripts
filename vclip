@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+input=$(cat)
+echo "$input" | xclip -selection clipboard
+echo "$input"

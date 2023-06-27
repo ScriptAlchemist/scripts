@@ -24,6 +24,11 @@ emoji[redX]=❌
 emoji[checkmark]=✅
 emoji[clock]=⏰
 emoji[blueCircle]=🔵
+emoji[crab]=🦀
+emoji[rocket]=🚀
+emoji[eyes]=👀
+emoji[facemelt]=🫠
+emoji[brain]=🧠
 
 toemoji() {
   local in=/dev/stdin
