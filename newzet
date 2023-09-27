@@ -8,11 +8,11 @@ path="${ZETS}/${1}"
 if [ -e "${path}" ]; then
   read -p "${1} already exists. Edit? " yes
   case "${yes}" in
-    y|yes|yep|yeppers|yeah|ok|okay) exec cd "${path}" && vim README.md
+    y|yes|yep|yeppers|yeah|ok|okay) exec cd "${path}" && nvim README.md
   esac
   exit 0
 fi
 
 mkdir "${path}"
 cd "${path}" 
-exec vim README.md 
+exec nvim README.md 

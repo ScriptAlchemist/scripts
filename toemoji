@@ -29,6 +29,7 @@ emoji[rocket]=🚀
 emoji[eyes]=👀
 emoji[facemelt]=🫠
 emoji[brain]=🧠
+emoji[clap]=👏
 
 toemoji() {
   local in=/dev/stdin
