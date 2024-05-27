@@ -3,7 +3,7 @@
 test ! -n "${ZETS}"  && echo "ZETS not set" && exit 1;
 
 # Count the number of non-hidden directories in the ZETS folder
-current_number=$(find "${ZETS}" -type d -not -path "${ZETS}/.git*" -not -name ".*" | wc -l)
+current_number=$(find "${ZETS}" -type d -not -path "${ZETS}/.git*" -not -name ".*" -not -path "${ZETS}/online_marketing" -not -path "${ZETS}/notes" | wc -l)
 
 log_number=$((current_number - 1))
 
