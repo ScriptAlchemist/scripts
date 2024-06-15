@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+# Check if the script is run with sudo
+if [[ $(id -u) -ne 0 ]]; then
+    echo "Please run this script with sudo."
+    exit 1
+fi
+
+# JSON configuration for key remapping
+read -r -d '' KEY_MAPPING << EOM
+{
+  "remappings": [
+    {
+      "from": {
+        "key_code": "h",
+        "modifiers": {
+          "mandatory": ["option"]
+        }
+      },
+      "to": {
+        "key_code": "left_arrow"
+      }
+    },
+    {
+      "from": {
+        "key_code": "j",
+        "modifiers": {
+          "mandatory": ["option"]
+        }
+      },
+      "to": {
+        "key_code": "down_arrow"
+      }
+    },
+    {
+      "from": {
+        "key_code": "k",
+        "modifiers": {
+          "mandatory": ["option"]
+        }
+      },
+      "to": {
+        "key_code": "up_arrow"
+      }
+    },
+    {
+      "from": {
+        "key_code": "l",
+        "modifiers": {
+          "mandatory": ["option"]
+        }
+      },
+      "to": {
+        "key_code": "right_arrow"
+      }
+    }
+  ]
+}
+EOM
+
+# Apply the key remapping using hidutil
+hidutil property --set "$KEY_MAPPING"
+
+# Exit the script
+exit 0

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+# Check if the script is run with sudo
+if [[ $(id -u) -ne 0 ]]; then
+    echo "Please run this script with sudo."
+    exit 1
+fi
+
+# Create a rule to remap the right Command key to the left Control key
+rule='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x7000000E7,"HIDKeyboardModifierMappingDst":0x7000000E0}]}'
+
+# Apply the rule using hidutil
+hidutil property --set "$rule"
+
+# Provide some feedback
+echo "Right Command key remapped to Left Control key."
