@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+ 
+file_name=$(echo "$@" | tr '[:upper:]' '[:lower:]' | tr ' ' '-').md
+
+touch "$file_name"
+
+echo "# $@" > "$file_name"
+echo "" >> "$file_name"
+echo "## $(now)" >> "$file_name"
+
+# Notify user
+echo "File '$file_name' created with title inside."
+
+# Open the file in nvim
+nvim "$file_name"

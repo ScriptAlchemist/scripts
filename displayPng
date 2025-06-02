@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+transmit_png() {
+    # Check if the file exists
+    if [[ ! -f "$1" ]]; then
+        echo "Error: File not found." >&2
+        return 1
+    fi
+
+    # Use macOS-compatible base64 command
+    data=$(base64 -i "$1")
+    data="${data//[[:space:]]}" # Remove all whitespace
+
+    pos=0
+    chunk_size=4096
+
+    # Start Kitty image protocol
+    printf "\e_Ga=T,f=100,s=%d,v=%d;" "$(identify -format "%w" "$1")" "$(identify -format "%h" "$1")"
+
+    while [ $pos -lt ${#data} ]; do
+        chunk="${data:$pos:$chunk_size}"
+        pos=$((pos + chunk_size))
+        if [ $pos -lt ${#data} ]; then
+            printf "m=1;"
+        fi
+        printf "%s" "$chunk"
+    done
+
+    # End Kitty image protocol
+    printf "\e\\"
+}
+
+transmit_png "$1"
+

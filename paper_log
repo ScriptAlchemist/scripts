@@ -9,5 +9,5 @@ log_number=$((current_number - 1))
 
 echo "# Paperstac Daily Log ${log_number}"
 echo ""
-echo '## '$(now "$*")
+echo '## '$(now)
 

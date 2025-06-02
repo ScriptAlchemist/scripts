@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+# Define input and output directories
+input_dir=~/projects/kate/finished
+output_dir=/Volumes/KatesFamily
+
+# Create the output directory if it doesn't exist
+mkdir -p "$output_dir"
+
+# Loop through all ISO files in the input directory
+for iso_file in "$input_dir"/*.iso; do
+    # Check if there are any ISO files
+    if [ ! -f "$iso_file" ]; then
+        echo "No ISO files found in $input_dir."
+        exit 1
+    fi
+
+    # Extract the base filename without path and extension
+    base_name=$(basename "$iso_file" .iso)
+
+    # Define the output MP4 file path
+    output_file="$output_dir/${base_name}.mp4"
+
+    echo "Processing $iso_file..."
+    
+    # Run HandBrakeCLI to convert the ISO to MP4
+    HandBrakeCLI -i "$iso_file" -o "$output_file" --preset="Fast 1080p30"
+
+    # Check if HandBrakeCLI succeeded
+    if [ $? -eq 0 ]; then
+        echo "Successfully converted: $iso_file -> $output_file"
+
+        mv "$iso_file" "$output_dir/"
+        echo "Moved $iso_file to $output_dir."
+    else
+        echo "Failed to convert: $iso_file" >&2
+    fi
+done
+
+echo "All conversions completed. Output files are in: $output_dir"
+

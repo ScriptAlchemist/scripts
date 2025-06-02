@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+# Function to create folders and files with the given template
+create_folder_with_template() {
+  local folder_name=$1
+  local svg_path=$2
+  local file_name_tsx="${folder_name}.tsx"
+  local file_name_stories="${folder_name}.stories.tsx"
+
+  # Check if the SVG file exists
+  if [[ ! -f $svg_path ]]; then
+    echo "SVG file not found: $svg_path"
+    return 1
+  fi
+
+  # Read the SVG content
+  local svg_content
+  svg_content=$(<"$svg_path")
+
+  # Create the folder
+  mkdir -p "$folder_name"
+
+  # Create the .tsx file with the template inside the folder
+  cat <<EOL > "$folder_name/$file_name_tsx"
+import * as React from 'react';
+
+type ${folder_name}Props = React.SVGProps<SVGSVGElement> & {
+  size?: string | number;
+};
+
+export const ${folder_name} = ({ className, size = 24, ...props }: ${folder_name}Props) => (
+  <svg
+    viewBox="0 0 24 24"
+    xmlns="http://www.w3.org/2000/svg"
+    width={size}
+    height={size}
+    className={className}
+    {...props}
+  >
+    {/*
+    ${svg_content}
+    */}
+  </svg>
+);
+EOL
+
+  # Create the .stories.tsx file with the template inside the folder
+  cat <<EOL > "$folder_name/$file_name_stories"
+import type { Meta, StoryObj } from '@storybook/react';
+
+import { ${folder_name} } from './${folder_name}';
+
+const meta: Meta<typeof ${folder_name}> = {
+  title: 'Branding/${folder_name}',
+  component: ${folder_name},
+  parameters: {
+    layout: 'padded',
+  },
+  tags: ['autodocs'],
+  argTypes: {},
+};
+
+export default meta;
+type Story = StoryObj<typeof ${folder_name}>;
+
+export const Default: Story = {
+  args: {},
+};
+
+export const Resized: Story = {
+  args: { size: 100 },
+};
+
+export const ResizedWithCss: Story = {
+  args: { className: 'h-10 w-10' },
+  name: 'Resized with CSS',
+};
+EOL
+}
+
+# Check if the correct number of arguments is provided
+if [[ $# -ne 2 ]]; then
+  echo "Usage: $0 <folder_name> <svg_path>"
+  exit 1
+fi
+
+# Read command-line arguments
+folder_name=$1
+svg_path=$2
+
+# Call the function with the provided arguments
+create_folder_with_template "$folder_name" "$svg_path"
+

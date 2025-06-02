@@ -1,0 +1,1377 @@
+#!/bin/bash
+
+set +e
+
+LOGFILE=/boot/firstrun.log
+exec > >(tee -a -i "$LOGFILE") 2>&1
+
+echo "Starting script execution..."
+
+# Check for root privileges
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root" 
+   exit 1
+fi
+
+echo "Root privileges confirmed."
+
+CURRENT_HOSTNAME=$(cat /etc/hostname | tr -d " \t\n\r")
+IMAGER_CUSTOM_PATH="/usr/lib/raspberrypi-sys-mods/imager_custom"
+USERCONF_PATH="/usr/lib/userconf-pi/userconf"
+
+echo "Current hostname: $CURRENT_HOSTNAME"
+echo "Setting hostname to 'hydra'..."
+
+if [ -f $IMAGER_CUSTOM_PATH ]; then
+   $IMAGER_CUSTOM_PATH set_hostname hydra
+else
+   hostnamectl set-hostname hydra
+   sed -i "s/127.0.1.1.*$CURRENT_HOSTNAME/127.0.1.1\thydra/g" /etc/hosts
+fi
+
+echo "Hostname set to 'hydra'."
+
+FIRSTUSER=$(getent passwd 1000 | cut -d: -f1)
+FIRSTUSERHOME=$(getent passwd 1000 | cut -d: -f6)
+
+echo "First user: $FIRSTUSER"
+
+echo "Enabling SSH..."
+if [ -f $IMAGER_CUSTOM_PATH ]; then
+   $IMAGER_CUSTOM_PATH enable_ssh
+else
+   systemctl enable ssh
+fi
+echo "SSH enabled."
+
+echo "Setting up first user..."
+
+if [ -f $USERCONF_PATH ]; then
+   $USERCONF_PATH 'bender' '$5$2CPFrt2nFj$SF1nEKTpTPP3TN8OBl5GX3K2ilq/vmIrOJOpJE6XXR3'
+else
+   echo "$FIRSTUSER:"'$5$2CPFrt2nFj$SF1nEKTpTPP3TN8OBl5GX3K2ilq/vmIrOJOpJE6XXR3' | chpasswd -e
+   if [ "$FIRSTUSER" != "bender" ]; then
+      usermod -l "bender" "$FIRSTUSER"
+      usermod -m -d "/home/bender" "bender"
+      groupmod -n "bender" "$FIRSTUSER"
+      if grep -q "^autologin-user=" /etc/lightdm/lightdm.conf ; then
+         sed /etc/lightdm/lightdm.conf -i -e "s/^autologin-user=.*/autologin-user=bender/"
+      fi
+      if [ -f /etc/systemd/system/getty@tty1.service.d/autologin.conf ]; then
+         sed /etc/systemd/system/getty@tty1.service.d/autologin.conf -i -e "s/$FIRSTUSER/bender/"
+      fi
+      if [ -f /etc/sudoers.d/010_pi-nopasswd ]; then
+         sed -i "s/^$FIRSTUSER /bender /" /etc/sudoers.d/010_pi-nopasswd
+      fi
+   fi
+fi
+
+echo "First user setup completed."
+
+FIRSTUSER=$(getent passwd bender | cut -d: -f1)
+FIRSTUSERHOME=$(getent passwd bender | cut -d: -f6)
+
+echo "Configuring WiFi..."
+if [ -f $IMAGER_CUSTOM_PATH ]; then
+   $IMAGER_CUSTOM_PATH set_wlan 'SpectrumSetup-7E' 'fc93e2753f58854ec4b7864dcb625b82794f84b4a35c92da7512537e21e3011c' 'US'
+else
+cat >/etc/wpa_supplicant/wpa_supplicant.conf <<'WPAEOF'
+country=US
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+ap_scan=1
+
+update_config=1
+network={
+	ssid="SpectrumSetup-7E"
+	psk=fc93e2753f58854ec4b7864dcb625b82794f84b4a35c92da7512537e21e3011c
+}
+
+WPAEOF
+   chmod 600 /etc/wpa_supplicant/wpa_supplicant.conf
+   rfkill unblock wifi
+   for filename in /var/lib/systemd/rfkill/*:wlan ; do
+       echo 0 > $filename
+   done
+fi
+
+echo "WiFi configured."
+
+echo "Setting keymap and timezone..."
+if [ -f $IMAGER_CUSTOM_PATH ]; then
+   $IMAGER_CUSTOM_PATH set_keymap 'us'
+   $IMAGER_CUSTOM_PATH set_timezone 'America/New_York'
+else
+   rm -f /etc/localtime
+   echo "America/New_York" >/etc/timezone
+   dpkg-reconfigure -f noninteractive tzdata
+cat >/etc/default/keyboard <<'KBEOF'
+XKBMODEL="pc105"
+XKBLAYOUT="us"
+XKBVARIANT=""
+XKBOPTIONS=""
+
+KBEOF
+   dpkg-reconfigure -f noninteractive keyboard-configuration
+fi
+
+echo "Keymap and timezone set."
+
+echo "Configuring locale..."
+sudo locale-gen en_US.UTF-8
+sudo update-locale LANG=en_US.UTF-8
+
+locales_installed=$(locale -a)
+if [[ $locales_installed == *"en_US.UTF-8"* ]]; then
+    echo "Locale en_US.UTF-8 is installed successfully."
+else
+    echo "Failed to install locale en_US.UTF-8."
+fi
+
+echo "Locale configured."
+
+# Modify .bashrc and .bash_profile for first user
+echo "Configuring user environment..."
+
+BASHRC="${FIRSTUSERHOME}/.bashrcbak"
+BASH_PROFILE="${FIRSTUSERHOME}/.bash_profile"
+
+cat <<EOF > $BASHRC
+# Custom user configurations
+eval "$(starship init bash)"
+
+export LANG="en_US.UTF-8"
+
+prepend_to_path() {
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$1"; then
+    PATH="$1:$PATH"
+  fi
+}
+
+export SCRIPTS="$HOME/scripts"
+prepend_to_path "$SCRIPTS"
+
+export NODE_MODULES="node_modules/.bin"
+prepend_to_path "$NODE_MODULES"
+          
+export ZETS="$HOME/work_zet"
+
+export RUSTUP_HOME=$HOME/.rustup
+export CARGO_HOME=$HOME/.cargo
+prepend_to_path "$CARGO_HOME/bin"
+
+export GOPATH=$HOME/go
+prepend_to_path "$GOPATH/bin"
+
+export VOLTA_HOME="$HOME/.volta"
+prepend_to_path "$VOLTA_HOME/bin"
+
+
+alias vi='nvim'
+
+EOF
+
+cat <<EOF > $BASH_PROFILE
+# Custom user profile configurations
+if [ -f ~/.bashrc ]; then
+    . ~/.bashrc
+fi
+EOF
+
+chown bender:bender $BASHRC $BASH_PROFILE
+
+echo "User environment configured."
+
+# Append downloadScript.sh
+DOWNLOAD_SCRIPT="${FIRSTUSERHOME}/downloadScript.sh"
+
+cat <<EOF > $DOWNLOAD_SCRIPT
+
+# Installing additional packages
+echo "Installing additional packages..."
+sudo apt-get update
+sudo apt-get apt full-upgrade -y
+sudo apt-get install -y bat htop nodejs npm ripgrep fzf neovim tmux
+
+echo "Packages installed."
+
+# Installing Rust using rustup
+echo "Installing Rust..."
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+source $HOME/.cargo/env
+
+echo "Rust installed."
+
+# Clone scripts repository into bender's home directory
+sudo -u bender git clone https://github.com/ScriptAlchemist/scripts.git /home/bender/scripts
+
+# Set ownership of the cloned directory to bender
+chown -R bender:bender /home/bender/scripts
+
+# Clone packer.nvim for Neovim plugins
+git clone --depth 1 https://github.com/wbthomason/packer.nvim ~/.local/share/nvim/site/pack/packer/start/packer.nvim
+
+cargo install startship --locked
+
+EOF
+
+chown bender:bender $DOWNLOAD_SCRIPT
+
+echo "download script added."
+
+# Append .tmux.conf configurations to user's .tmux.conf
+TMUX_CONF="${FIRSTUSERHOME}/.tmux.conf"
+
+cat <<EOF > $TMUX_CONF
+
+# Your custom tmux configurations
+# Add here...
+
+# fix accidentally typing accent characters, etc.
+# by forcing the terminal to not wait around
+# (every single tmux file should have this)
+set -sg escape-time 0
+
+# change default meta key to same as screen
+unbind C-b
+unbind C-a
+set -g prefix C-a
+
+# form vim/tmux d/y buffer sync
+set -g focus-events
+
+# use a different prefix for nested
+bind-key -n C-y send-prefix
+
+# add double-tap meta key to toggle last window
+bind-key C-a last-window
+
+# pane colors and display
+
+# create more intuitive split key combos (same as modern screen)
+unbind |
+bind | split-window -h
+bind '\' split-window -h
+bind 'C-\' split-window -h
+unbind -
+bind - split-window -v
+unbind _
+bind _ split-window -v
+
+# kill current window and all panes
+bind-key & kill-window
+
+# vi for copy mode
+setw -g mode-keys vi
+
+# vi for command status
+set -g status-keys vi
+
+# vi keys to resize
+bind -r C-k resize-pane -U 1
+bind -r C-j resize-pane -D 1
+bind -r C-h resize-pane -L 1
+bind -r C-l resize-pane -R 1
+
+# vi keys to navigate panes
+bind -r k select-pane -U
+bind -r j select-pane -D
+bind -r h select-pane -L
+bind -r l select-pane -R
+
+# customize create new window for streaming
+unbind C-c
+bind C-c \
+  new-window \; \
+  split-window -h -p 69 \; \
+  select-pane -t 1 \;
+
+# avoid cursor movement messing with resize
+set -g repeat-time 200
+
+# colors, clock, and stuff
+#set -g default-terminal "xterm-256color" # works, but oh so wrong
+#set -ga terminal-overrides ",xterm-256color*:Tc"
+set -g default-terminal "screen-256color"
+set -g clock-mode-style 12
+setw -g clock-mode-colour cyan
+set -g base-index 1
+setw -g pane-base-index 1
+
+# die, die, die (just be careful, right next to C-c)
+
+# color the pane borders nearly invisible
+# (when not using hacked tmux without them)
+set -g pane-border-style "fg=#171717"
+set -g pane-active-border-style "fg=#171717"
+
+# color of the window selection background
+set -g mode-style "bg=black"
+
+# very unique Mac bug
+if-shell "type 'reattach-to-user-namespace' >/dev/null" "set -g default-command 'reattach-to-user-namespace -l $SHELL'"
+
+# reload configuration
+bind -r r source-file ~/.tmux.conf
+
+set -g status-style "fg=#665c54"
+set -g status-bg default
+set -g status-position top
+set -g status-interval 1
+set -g status-left ""
+
+#set -g status-left-length 78
+#set -g status-left-style "fg=#928374,bold,reverse"
+#set -g status-left-style "fg=#928374"
+#set -g status-left-style "fg=brightwhite"
+#set -g status-left "#(now) "
+#set -g status-left "#(head -1 ~/.status) "
+#set -g status-right "%a, %b %-e, %Y, %-l:%M:%S%p %Z%0z" 
+#set -g status-right-style "fg=#928374,bold"
+set -g status-right-length 50
+set -g status-right "#(z pomo)"
+#set -g window-status-format ""
+#set -g window-status-current-format ""
+
+set -g message-style "fg=red"
+
+# disable status
+#set -g status off
+set -g status on
+
+set-option -g default-command "bash --rcfile ~/.bashrc"
+EOF
+
+chown bender:bender $TMUX_CONF
+
+echo "tmux configuration added."
+
+# Append .tmux-plain.conf configurations to user's .tmux-plain.conf
+TMUX_PLAIN_CONF="${FIRSTUSERHOME}/.tmux-plain.conf"
+
+cat <<EOF > $TMUX_PLAIN_CONF
+
+# Your custom tmux-plain configurations
+# Add here...
+
+# change default meta key to same as screen
+unbind C-b
+unbind C-a
+set -g prefix C-a
+
+# form vim/tmux d/y buffer sync
+set -g focus-events
+
+# use a different prefix for nested
+bind-key -n C-y send-prefix
+
+# add double-tap meta key to toggle last window
+bind-key C-a last-window
+
+# create more intuitive split key combos (same as modern screen)
+unbind |
+bind | split-window -h
+bind '\' split-window -h
+bind 'C-\' split-window -h
+unbind -
+bind - split-window -v
+unbind _
+bind _ split-window -v
+
+# vi for copy mode
+setw -g mode-keys vi
+
+# vi for command status
+set -g status-keys vi
+
+# vi keys to resize
+bind -r C-k resize-pane -U 1
+bind -r C-j resize-pane -D 1
+bind -r C-h resize-pane -L 1
+bind -r C-l resize-pane -R 1
+
+# vi keys to navigate panes
+bind -r k select-pane -U
+bind -r j select-pane -D
+bind -r h select-pane -L
+bind -r l select-pane -R
+
+# avoid cursor movement messing with resize
+set -g repeat-time 200
+
+# colors, clock, and stuff
+#set -g default-terminal "xterm-256color" # works, but oh so wrong
+#set -ga terminal-overrides ",xterm-256color*:Tc"
+set -g default-terminal "screen-256color"
+#set -g clock-mode-style 12
+setw -g clock-mode-colour cyan
+set -g base-index 1
+setw -g pane-base-index 1
+
+# die, die, die (just be careful, right next to C-c)
+
+# color the pane borders nearly invisible
+# (when not using hacked tmux without them)
+set -g pane-border-style "fg=#202020,bg=#202020"
+set -g pane-active-border-style "fg=#202020,bg=#202020"
+
+# color of the window selection background
+set -g mode-style "bg=black"
+
+# reload configuration
+bind -r r source-file ~/.tmux-plain.conf
+
+set -g message-style "fg=red"
+set -g status off
+EOF
+
+chown bender:bender $TMUX_PLAIN_CONF
+
+echo "tmux-plain configuration added."
+
+# Create .config directory if it doesn't exist
+CONFIG_DIR="${FIRSTUSERHOME}/.config"
+mkdir -p $CONFIG_DIR
+chown -R bender:bender $CONFIG_DIR
+
+# Copy nvim directory structure
+NVIM_DIR="${CONFIG_DIR}/nvim"
+mkdir -p $NVIM_DIR
+chown -R bender:bender $NVIM_DIR
+
+# Copy alacritty directory structure
+ALACRITTY_DIR="${CONFIG_DIR}/alacritty"
+mkdir -p $ALACRITTY_DIR
+chown -R bender:bender $ALACRITTY_DIR
+
+# Create starship.toml file and add contents
+STARSHIP_TOML="${CONFIG_DIR}/starship.toml"
+cat <<EOF > $STARSHIP_TOML
+[aws]
+symbol = "☁️ "
+
+[buf]
+symbol = "🐃 "
+
+[c]
+symbol = " "
+
+[conda]
+symbol = "🅒 "
+
+[dart]
+symbol = "🎯 "
+
+[directory]
+read_only = " "
+
+[docker_context]
+symbol = "🐳 "
+
+[elixir]
+symbol = "💧 "
+
+[elm]
+symbol = "🌳 "
+
+[git_branch]
+symbol = " "
+
+[golang]
+symbol = " "
+
+[guix_shell]
+symbol = " "
+
+[haskell]
+symbol = " "
+
+[haxe]
+symbol = "⌘ "
+
+[hg_branch]
+symbol = " "
+
+[java]
+symbol = " "
+
+[julia]
+symbol = " "
+
+[lua]
+symbol = " "
+
+[memory_usage]
+symbol = " "
+
+[meson]
+symbol = "喝 "
+
+[nim]
+symbol = " "
+
+[nix_shell]
+symbol = " "
+
+[nodejs]
+symbol = " "
+
+[os.symbols]
+Alpine = " "
+Amazon = " "
+Android = " "
+Arch = " "
+CentOS = " "
+Debian = " "
+DragonFly = " "
+Emscripten = " "
+EndeavourOS = " "
+Fedora = " "
+FreeBSD = " "
+Garuda = "﯑ "
+Gentoo = " "
+HardenedBSD = "ﲊ "
+Illumos = " "
+Linux = " "
+Macos = " "
+Manjaro = " "
+Mariner = " "
+MidnightBSD = " "
+Mint = " "
+NetBSD = " "
+NixOS = " "
+OpenBSD = " "
+openSUSE = " "
+OracleLinux = " "
+Pop = " "
+Raspbian = " "
+Redhat = " "
+RedHatEnterprise = " "
+Redox = " "
+Solus = "ﴱ "
+SUSE = " "
+Ubuntu = " "
+Unknown = " "
+Windows = " "
+
+[package]
+symbol = " "
+
+[python]
+symbol = "🐍 "
+
+[rlang]
+symbol = "ﳒ "
+
+[ruby]
+symbol = "💎 "
+
+[rust]
+symbol = "🦀 "
+
+[scala]
+symbol = " "
+
+[spack]
+symbol = "🅢 "
+EOF
+
+chown bender:bender $STARSHIP_TOML
+
+echo "starship.toml created and configured in ~/.config directory."
+
+# Create alacritty.toml file and add contents
+ALACRITTY_TOML="${ALACRITTY_DIR}/alacritty.toml"
+cat <<EOF > $ALACRITTY_TOML
+[colors.bright]
+black = "#928374"
+blue = "#83a598"
+cyan = "#8ec07c"
+green = "#b8bb26"
+magenta = "#d3869b"
+red = "#fb4934"
+white = "#ebdbb2"
+yellow = "#fabd2f"
+
+[colors.normal]
+black = "#282828"
+blue = "#458588"
+cyan = "#689d6a"
+green = "#98971a"
+magenta = "#b16286"
+red = "#cc241d"
+white = "#a89984"
+yellow = "#d79921"
+
+[colors.primary]
+background = "#282828"
+foreground = "#ebdbb2"
+
+[font]
+size = 15
+
+[font.bold]
+family = "FiraCode Nerd Font"
+style = "Bold"
+
+[font.normal]
+family = "FiraCode Nerd Font"
+style = "Regular"
+
+[window]
+opacity = 0.98
+decorations = 'Buttonless'
+startup_mode = 'Fullscreen'
+
+[window.padding]
+x = 10
+y = 10
+EOF
+chown bender:bender $ALACRITTY_TOML
+
+echo "alacritty.toml created and configured in ~/.config/alacritty directory."
+
+# Create btop.conf file and add contents
+BTOP_CONF="${CONFIG_DIR}/btop/btop.conf"
+mkdir -p "$(dirname "$BTOP_CONF")"
+cat <<EOF > $BTOP_CONF
+#? Config file for btop v. 1.3.2
+
+#* Name of a btop++/bpytop/bashtop formatted ".theme" file, "Default" and "TTY" for builtin themes.
+#* Themes should be placed in "../share/btop/themes" relative to binary or "\$HOME/.config/btop/themes"
+color_theme = "../share/btop/1.3.2/share/btop/themes/gruvbox_dark_v2.theme"
+
+#* If the theme set background should be shown, set to False if you want terminal background transparency.
+theme_background = True
+
+#* Sets if 24-bit truecolor should be used, will convert 24-bit colors to 256 color (6x6x6 color cube) if false.
+truecolor = True
+
+#* Set to true to force tty mode regardless if a real tty has been detected or not.
+#* Will force 16-color mode and TTY theme, set all graph symbols to "tty" and swap out other non tty friendly symbols.
+force_tty = False
+
+#* Define presets for the layout of the boxes. Preset 0 is always all boxes shown with default settings. Max 9 presets.
+#* Format: "box_name:P:G,box_name:P:G" P=(0 or 1) for alternate positions, G=graph symbol to use for box.
+#* Use whitespace " " as separator between different presets.
+#* Example: "cpu:0:default,mem:0:tty,proc:1:default cpu:0:braille,proc:0:tty"
+presets = "cpu:1:default,proc:0:default cpu:0:default,mem:0:default,net:0:default cpu:0:block,net:0:tty"
+
+#* Set to True to enable "h,j,k,l,g,G" keys for directional control in lists.
+#* Conflicting keys for h:"help" and k:"kill" is accessible while holding shift.
+vim_keys = True
+
+#* Rounded corners on boxes, is ignored if TTY mode is ON.
+rounded_corners = True
+
+#* Default symbols to use for graph creation, "braille", "block" or "tty".
+#* "braille" offers the highest resolution but might not be included in all fonts.
+#* "block" has half the resolution of braille but uses more common characters.
+#* "tty" uses only 3 different symbols but will work with most fonts and should work in a real TTY.
+#* Note that "tty" only has half the horizontal resolution of the other two, so will show a shorter historical view.
+graph_symbol = "braille"
+
+# Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+graph_symbol_cpu = "default"
+
+# Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+graph_symbol_mem = "default"
+
+# Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+graph_symbol_net = "braille"
+
+# Graph symbol to use for graphs in cpu box, "default", "braille", "block" or "tty".
+graph_symbol_proc = "default"
+
+#* Manually set which boxes to show. Available values are "cpu mem net proc" and "gpu0" through "gpu5", separate values with whitespace.
+#* Update time in milliseconds, recommended 2000 ms or above for better sample times for graphs.
+shown_boxes = "cpu mem net proc"
+
+#* Processes sorting, "pid" "program" "arguments" "threads" "user" "memory" "cpu lazy" "cpu direct",
+#* "cpu lazy" sorts top process over time (easier to follow), "cpu direct" updates top process directly.
+proc_sorting = "cpu lazy"
+
+#* Reverse sorting order, True or False.
+proc_reversed = False
+
+#* Show processes as a tree.
+proc_tree = False
+
+#* Use the cpu graph colors in the process list.
+proc_colors = True
+
+#* Use a darkening gradient in the process list.
+proc_gradient = True
+
+#* If process cpu usage should be of the core it's running on or usage of the total available cpu power.
+proc_per_core = False
+
+#* Show process memory as bytes instead of percent.
+proc_mem_bytes = True
+
+#* Show cpu graph for each process.
+proc_cpu_graphs = True
+
+#* Use /proc/[pid]/smaps for memory information in the process info box (very slow but more accurate)
+proc_info_smaps = False
+
+#* Show proc box on left side of screen instead of right.
+proc_left = False
+
+#* (Linux) Filter processes tied to the Linux kernel(similar behavior to htop).
+proc_filter_kernel = False
+
+#* In tree-view, always accumulate child process resources in the parent process.
+proc_aggregate = False
+
+#* Sets the CPU stat shown in upper half of the CPU graph, "total" is always available.
+#* Select from a list of detected attributes from the options menu.
+cpu_graph_upper = "Auto"
+
+#* Sets the CPU stat shown in lower half of the CPU graph, "total" is always available.
+#* Select from a list of detected attributes from the options menu.
+cpu_graph_lower = "Auto"
+
+#* Toggles if the lower CPU graph should be inverted.
+cpu_invert_lower = True
+
+#* Set to True to completely disable the lower CPU graph.
+cpu_single_graph = False
+
+#* Show cpu box at bottom of screen instead of top.
+cpu_bottom = False
+
+#* Shows the system uptime in the CPU box.
+show_uptime = True
+
+#* Show cpu temperature.
+check_temp = True
+
+#* Which sensor to use for cpu temperature, use options menu to select from list of available sensors.
+cpu_sensor = "Auto"
+
+#* Show temperatures for cpu cores also if check_temp is True and sensors has been found.
+show_coretemp = True
+
+#* Set a custom mapping between core and coretemp, can be needed on certain cpus to get correct temperature for correct core.
+#* Use lm-sensors or similar to see which cores are reporting temperatures on your machine.
+#* Format "x:y" x=core with wrong temp, y=core with correct temp, use space as separator between multiple entries.
+#* Example: "4:0 5:1 6:3"
+cpu_core_map = ""
+
+#* Which temperature scale to use, available values: "celsius", "fahrenheit", "kelvin" and "rankine".
+temp_scale = "fahrenheit"
+
+#* Use base 10 for bits/bytes sizes, KB = 1000 instead of KiB = 1024.
+base_10_sizes = False
+
+#* Show CPU frequency.
+show_cpu_freq = True
+
+#* Draw a clock at top of screen, formatting according to strftime, empty string to disable.
+#* Special formatting: /host = hostname | /user = username | /uptime = system uptime
+clock_format = "%X"
+
+#* Update main ui in background when menus are showing, set this to false if the menus is flickering too much for comfort.
+background_update = True
+
+#* Custom cpu model name, empty string to disable.
+custom_cpu_name = ""
+
+#* Optional filter for shown disks, should be full path of a mountpoint, separate multiple values with whitespace " ".
+#* Begin line with "exclude=" to change to exclude filter, otherwise defaults to "most include" filter. Example: disks_filter="exclude=/boot /home/user".
+disks_filter = ""
+
+#* Show graphs instead of meters for memory values.
+mem_graphs = True
+
+#* Show mem box below net box instead of above.
+mem_below_net = False
+
+#* Count ZFS ARC in cached and available memory.
+zfs_arc_cached = True
+
+#* If swap memory should be shown in memory box.
+show_swap = True
+
+#* Show swap as a disk, ignores show_swap value above, inserts itself after first disk.
+swap_disk = True
+
+#* If mem box should be split to also show disks info.
+show_disks = True
+
+#* Filter out non physical disks. Set this to False to include network disks, RAM disks and similar.
+only_physical = True
+
+#* Read disks list from /etc/fstab. This also disables only_physical.
+use_fstab = True
+
+#* Setting this to True will hide all datasets, and only show ZFS pools. (IO stats will be calculated per-pool)
+zfs_hide_datasets = False
+
+#* Set to true to show available disk space for privileged users.
+disk_free_priv = False
+
+#* Toggles if io activity % (disk busy time) should be shown in regular disk usage view.
+show_io_stat = True
+
+#* Toggles io mode for disks, showing big graphs for disk read/write speeds.
+io_mode = False
+
+#* Set to True to show combined read/write io graphs in io mode.
+io_graph_combined = False
+
+#* Set the top speed for the io graphs in MiB/s (100 by default), use format "mountpoint:speed" separate disks with whitespace " ".
+#* Example: "/mnt/media:100 /:20 /boot:1".
+io_graph_speeds = ""
+
+#* Set fixed values for network graphs in Mebibits. Is only used if net_auto is also set to False.
+net_download = 100
+
+net_upload = 100
+
+#* Use network graphs auto rescaling mode, ignores any values set above and rescales down to 10 Kibibytes at the lowest.
+net_auto = False
+
+#* Sync the auto scaling for download and upload to whichever currently has the highest scale.
+net_sync = True
+
+#* Starts with the Network Interface specified here.
+net_iface = "en0"
+
+#* Show battery stats in top right if battery is present.
+show_battery = True
+
+#* Which battery to use if multiple are present. "Auto" for auto detection.
+selected_battery = "Auto"
+
+#* Show power stats of battery next to charge indicator.
+show_battery_watts = True
+
+#* Set loglevel for "~/.config/btop/btop.log" levels are: "ERROR" "WARNING" "INFO" "DEBUG".
+#* The level set includes all lower levels, i.e. "DEBUG" will show all logging info.
+log_level = "WARNING"
+EOF
+chown bender:bender $BTOP_CONF
+
+echo "btop.conf created and configured in ~/.config/btop directory."
+
+# Create directories for Neovim Lua configuration
+mkdir -p "${NVIM_DIR}/lua/bender"
+chown -R bender:bender "${NVIM_DIR}"
+
+# Add contents to init.lua
+cat <<EOF > "${NVIM_DIR}/init.lua"
+require("bender")
+EOF
+
+# Add contents to packer.lua
+cat <<EOF > "${NVIM_DIR}/lua/bender/packer.lua"
+-- This file can be loaded by calling lua require('plugins') from your init.vim
+
+-- Only required if you have packer configured as opt
+vim.cmd [[packadd packer.nvim]]
+
+return require('packer').startup(function(use)
+	-- Packer can manage itself
+	use 'wbthomason/packer.nvim'
+
+	use {
+		'nvim-telescope/telescope.nvim', tag = '0.1.2',
+		-- or                            , branch = '0.1.x',
+		requires = { {'nvim-lua/plenary.nvim'} }
+	}
+	use { "catppuccin/nvim", as = "catppuccin" }
+
+	use('nvim-treesitter/nvim-treesitter')
+	use('ThePrimeagen/harpoon')
+	use('mbbill/undotree')
+	use('tpope/vim-fugitive')
+	use {
+		'VonHeikemen/lsp-zero.nvim',
+		branch = 'v2.x',
+		requires = {
+			-- LSP Support
+			{'neovim/nvim-lspconfig'},             -- Required
+			{'williamboman/mason.nvim'},           -- Optional
+			{'williamboman/mason-lspconfig.nvim'}, -- Optional
+
+			-- Autocompletion
+			{'hrsh7th/nvim-cmp'},     -- Required
+			{'hrsh7th/cmp-nvim-lsp'}, -- Required
+			{'L3MON4D3/LuaSnip'},     -- Required
+		}
+	}
+	use {
+		'nvim-tree/nvim-tree.lua',
+		requires = {
+			'nvim-tree/nvim-web-devicons', -- optional
+		},
+	}
+	use {
+		'vim-pandoc/vim-pandoc',
+		ft = "markdown"
+	}
+  use('tpope/vim-commentary')
+	--[[
+	use {
+	'neoclide/coc.nvim', branch = 'release',
+	}
+	--]]
+
+  --[[
+  use {
+    'mg979/vim-visual-multi', branch = 'master',
+  }
+  --]]
+
+end)
+EOF
+
+# Add contents to remap.lua
+cat <<EOF > "${NVIM_DIR}/lua/bender/remap.lua"
+vim.g.mapleader = " "
+vim.keymap.set("n", "<leader>pv", vim.cmd.Ex)
+vim.api.nvim_set_keymap('i', 'jj', '<Esc>', { noremap = true })
+-- vim.api.nvim_set_keymap('n', '<C-O>', ':nohl<CR><C-L>', { noremap = true, silent = true })
+EOF
+
+# Add contents to set.lua
+cat <<EOF > "${NVIM_DIR}/lua/bender/set.lua"
+vim.opt.guicursor = ""
+
+vim.opt.nu = true
+-- vim.opt.relativenumber = true
+
+vim.opt.tabstop = 2
+vim.opt.softtabstop = 2
+vim.opt.shiftwidth = 2
+vim.opt.expandtab = true
+
+vim.opt.smartindent = true
+
+vim.opt.wrap = false
+
+vim.opt.swapfile = false
+vim.opt.backup = false
+-- vim.opt.undodir = os.getenv("HOME") .. "/.vim/undodir"
+-- vim.opt.undofile = true
+
+vim.opt.hlsearch = true
+vim.opt.incsearch = true
+
+vim.opt.termguicolors = true
+
+vim.opt.scrolloff = 8
+vim.opt.signcolumn = "yes"
+
+vim.opt.updatetime = 50
+
+vim.opt.colorcolumn = "72"
+
+-- Enable sensing the filetype and loading filetype plugins.
+vim.cmd('filetype plugin on')
+
+-- Enable omni-completion
+vim.cmd([[set omnifunc=syntaxcomplete#Complete]])
+
+-- Set wildignore in Neovim Lua configuration
+vim.api.nvim_set_var('wildignore', '*.docx,*.jpg,*.png,*.gif,*.pdf,*.pyc,*.exe,*.flv,*.img,*.xlsx')
+
+-- Run shell command on BufWritePost for *.md files
+vim.cmd([[autocmd BufWritePost *.md silent !toemoji %]])
+
+-- Enable omni-completion
+vim.api.nvim_set_option('omnifunc', 'syntaxcomplete#Complete')
+
+-- Clear status line when init.lua is reloaded.
+vim.opt.statusline = ''
+
+-- Status line left side.
+-- vim.opt.statusline:append(' %F %M %Y %R')
+
+-- Use a divider to separate the left side from the right side.
+-- vim.opt.statusline:append('%=')
+
+-- Status line right side.
+-- vim.opt.statusline:append(' ascii: %b hex: 0x%B row: %l col: %c percent: %p%%')
+
+-- Function to count words in a string
+function word_count(text)
+    local _, count = string.gsub(text, "%S+", "")
+    return count
+end
+
+-- Function to update the statusline with word count
+function update_statusline()
+    local current_buffer = vim.fn.bufnr("%")
+    local buffer_content = vim.api.nvim_buf_get_lines(current_buffer, 0, -1, false)
+    local word_count = word_count(table.concat(buffer_content, " "))
+    
+    -- Define the complete statusline string
+    local statusline = ' %F %M %Y %R'
+    statusline = statusline .. '%='
+    statusline = statusline .. ' Words: ' .. word_count
+    statusline = statusline .. ' ascii: %b hex: 0x%B row: %l col: %c percent: %p%%'
+    
+    -- Set the statusline
+    vim.wo.statusline = statusline
+end
+
+-- Update statusline when the buffer is read or written
+vim.cmd([[autocmd BufReadPost,BufWritePost * lua update_statusline()]])
+
+-- Show the status on the second to last line.
+vim.opt.laststatus = 2
+
+-- I hate automatic folding
+-- vim.opt.foldmethod = 'syntax'
+vim.opt.foldenable = false
+
+-- Disable mouse interaction
+vim.opt.mouse = ''
+EOF
+
+# Set ownership for the created files
+chown -R bender:bender "${NVIM_DIR}"
+
+mkdir -p "${NVIM_DIR}/after/plugin"
+
+# Function to create Lua files with content
+create_lua_file() {
+    local filename="${NVIM_DIR}/$1"
+    echo "Creating ${filename}..."
+    echo "$2" > "${filename}"
+    chown -R bender:bender "${NVIM_DIR}"
+}
+
+# init.lua
+create_lua_file "init.lua" '
+require("bender")
+'
+
+# bender/init.lua
+create_lua_file "lua/bender/init.lua" '
+require("bender.packer")
+require("bender.remap")
+require("bender.set")
+'
+
+# bender/packer.lua
+create_lua_file "lua/bender/packer.lua" '
+-- This file can be loaded by calling lua require("plugins") from your init.vim
+
+-- Only required if you have packer configured as opt
+vim.cmd [[packadd packer.nvim]]
+
+return require("packer").startup(function(use)
+    -- Packer can manage itself
+    use "wbthomason/packer.nvim"
+
+    use {
+        "nvim-telescope/telescope.nvim",
+        tag = "0.1.2",
+        requires = { {"nvim-lua/plenary.nvim"} }
+    }
+
+    use { "catppuccin/nvim", as = "catppuccin" }
+
+    use("nvim-treesitter/nvim-treesitter")
+    use("ThePrimeagen/harpoon")
+    use("mbbill/undotree")
+    use("tpope/vim-fugitive")
+
+    use {
+        "VonHeikemen/lsp-zero.nvim",
+        branch = "v2.x",
+        requires = {
+            -- LSP Support
+            {"neovim/nvim-lspconfig"},             -- Required
+            {"williamboman/mason.nvim"},           -- Optional
+            {"williamboman/mason-lspconfig.nvim"}, -- Optional
+
+            -- Autocompletion
+            {"hrsh7th/nvim-cmp"},     -- Required
+            {"hrsh7th/cmp-nvim-lsp"}, -- Required
+            {"L3MON4D3/LuaSnip"},     -- Required
+        }
+    }
+
+    use {
+        "nvim-tree/nvim-tree.lua",
+        requires = {
+            "nvim-tree/nvim-web-devicons", -- optional
+        },
+    }
+
+    use {
+        "vim-pandoc/vim-pandoc",
+        ft = "markdown"
+    }
+
+    use("tpope/vim-commentary")
+end)
+'
+
+# bender/remap.lua
+create_lua_file "lua/bender/remap.lua" '
+vim.g.mapleader = " "
+vim.keymap.set("n", "<leader>pv", vim.cmd.Ex)
+vim.api.nvim_set_keymap("i", "jj", "<Esc>", { noremap = true })
+'
+
+# bender/set.lua
+create_lua_file "lua/bender/set.lua" '
+vim.opt.guicursor = ""
+
+vim.opt.nu = true
+vim.opt.tabstop = 2
+vim.opt.softtabstop = 2
+vim.opt.shiftwidth = 2
+vim.opt.expandtab = true
+
+vim.opt.smartindent = true
+
+vim.opt.wrap = false
+
+vim.opt.swapfile = false
+vim.opt.backup = false
+
+vim.opt.hlsearch = true
+vim.opt.incsearch = true
+
+vim.opt.termguicolors = true
+
+vim.opt.scrolloff = 8
+vim.opt.signcolumn = "yes"
+
+vim.opt.updatetime = 50
+
+vim.opt.colorcolumn = "72"
+
+-- Enable sensing the filetype and loading filetype plugins.
+vim.cmd("filetype plugin on")
+
+-- Enable omni-completion
+vim.cmd([[set omnifunc=syntaxcomplete#Complete]])
+
+-- Set wildignore in Neovim Lua configuration
+vim.api.nvim_set_var("wildignore", "*.docx,*.jpg,*.png,*.gif,*.pdf,*.pyc,*.exe,*.flv,*.img,*.xlsx")
+
+-- Run shell command on BufWritePost for *.md files
+vim.cmd([[autocmd BufWritePost *.md silent !toemoji %]])
+
+-- Enable omni-completion
+vim.api.nvim_set_option("omnifunc", "syntaxcomplete#Complete")
+
+-- Clear status line when init.lua is reloaded.
+vim.opt.statusline = ""
+
+-- Function to count words in a string
+function word_count(text)
+    local _, count = string.gsub(text, "%S+", "")
+    return count
+end
+
+-- Function to update the statusline with word count
+function update_statusline()
+    local current_buffer = vim.fn.bufnr("%")
+    local buffer_content = vim.api.nvim_buf_get_lines(current_buffer, 0, -1, false)
+    local word_count = word_count(table.concat(buffer_content, " "))
+
+    -- Define the complete statusline string
+    local statusline = " %F %M %Y %R"
+    statusline = statusline .. "%="
+    statusline = statusline .. " Words: " .. word_count
+    statusline = statusline .. " ascii: %b hex: 0x%B row: %l col: %c percent: %p%%"
+
+    -- Set the statusline
+    vim.wo.statusline = statusline
+end
+
+-- Update statusline when the buffer is read or written
+vim.cmd([[autocmd BufReadPost,BufWritePost * lua update_statusline()]])
+
+-- Show the status on the second to last line.
+vim.opt.laststatus = 2
+
+-- I hate automatic folding
+-- vim.opt.foldmethod = "syntax"
+vim.opt.foldenable = false
+
+-- Disable mouse interaction
+vim.opt.mouse = ""
+'
+
+# after/plugin/colors.lua
+create_lua_file "after/plugin/colors.lua" '
+function ColorSetup(color)
+    color = color or "catppuccin-frappe"
+    vim.cmd("colorscheme " .. color)
+
+    vim.api.nvim_set_hl(0, "Normal", { bg = "none" })
+    vim.api.nvim_set_hl(0, "NormalFloat", { bg = "none" })
+end
+
+ColorSetup()
+'
+
+# after/plugin/fugitive.lua
+create_lua_file "after/plugin/fugitive.lua" '
+vim.keymap.set("n", "<leader>gs", vim.cmd.Git)
+'
+
+# after/plugin/harpoon.lua
+create_lua_file "after/plugin/harpoon.lua" '
+local mark = require("harpoon.mark")
+local ui = require("harpoon.ui")
+
+vim.keymap.set("n", "<leader>a", mark.add_file)
+vim.keymap.set("n", "<C-e>", ui.toggle_quick_menu)
+
+vim.keymap.set("n", "<C-h>", function() ui.nav_file(1) end)
+vim.keymap.set("n", "<C-j>", function() ui.nav_file(2) end)
+vim.keymap.set("n", "<C-k>", function() ui.nav_file(3) end)
+vim.keymap.set("n", "<C-l>", function() ui.nav_file(4) end)
+'
+
+# after/plugin/lsp.lua
+create_lua_file "after/plugin/lsp.lua" '
+local lsp = require("lsp-zero")
+
+lsp.preset("recommended")
+
+lsp.ensure_installed({
+    "tsserver",
+    "rust_analyzer",
+    "eslint",
+})
+
+-- Fix Undefined global "vim"
+lsp.nvim_workspace()
+
+local cmp = require("cmp")
+local cmp_select = {behavior = cmp.SelectBehavior.Select}
+local cmp_mappings = lsp.defaults.cmp_mappings({
+    ["<C-p>"] = cmp.mapping.select_prev_item(cmp_select),
+    ["<C-n>"] = cmp.mapping.select_next_item(cmp_select),
+    ["<CR>"] = cmp.mapping.confirm({ select = true }),
+    ["<C-Space>"] = cmp.mapping.complete(),
+})
+
+lsp.setup_nvim_cmp({
+    sources = {
+        {name = "nvim_lsp"},
+        {name = "buffer"},
+        {name = "path" },
+    },
+    mapping = cmp_mappings
+})
+
+lsp.set_preferences({
+    suggest_lsp_servers = false,
+    sign_icons = {
+        error = "E",
+        warn = "W",
+        hint = "H",
+        info = "I"
+    }
+})
+
+lsp.on_attach(function(client, bufnr)
+    local opts = {buffer = bufnr, remap = false}
+
+    vim.keymap.set("n", "gd", function() vim.lsp.buf.definition() end, opts)
+    vim.keymap.set("n", "K", function() vim.lsp.buf.hover() end, opts)
+    vim.keymap.set("n", "<leader>vws", function() vim.lsp.buf.workspace_symbol() end, opts)
+    vim.keymap.set("n", "<leader>vd", function() vim.diagnostic.open_float() end, opts)
+    vim.keymap.set("n", "[d", function() vim.diagnostic.goto_next() end, opts)
+    vim.keymap.set("n", "]d", function() vim.diagnostic.goto_prev() end, opts)
+    vim.keymap.set("n", "<leader>vca", function() vim.lsp.buf.code_action() end, opts)
+    vim.keymap.set("n", "<leader>vrr", function() vim.lsp.buf.references() end, opts)
+    vim.keymap.set("n", "<leader>vrn", function() vim.lsp.buf.rename() end, opts)
+    vim.keymap.set("i", "<C-h>", function() vim.lsp.buf.signature_help() end, opts)
+end)
+
+lsp.setup()
+
+vim.diagnostic.config({
+    virtual_text = true
+})
+'
+
+# after/plugin/pandoc.vim
+create_lua_file "after/plugin/pandoc.vim" '
+" pandoc
+let g:pandoc#formatting#mode = "h" " A
+let g:pandoc#formatting#textwidth = 72
+'
+
+# after/plugin/telescope.lua
+create_lua_file "after/plugin/telescope.lua" '
+local builtin = require("telescope.builtin")
+
+vim.keymap.set("n", "<leader>pf", builtin.find_files, {})
+vim.keymap.set("n", "<C-p>", builtin.git_files, {})
+vim.keymap.set("n", "<leader>ps", function()
+    builtin.grep_string({ search = vim.fn.input("Grep > ") })
+end)
+'
+
+# after/plugin/tree.lua
+create_lua_file "after/plugin/tree.lua" '
+-- disable netrw at the very start of your init.lua
+-- vim.g.loaded_netrw = 1
+-- vim.g.loaded_netrwPlugin = 1
+
+-- set termguicolors to enable highlight groups
+vim.opt.termguicolors = true
+
+-- OR setup with some options
+require("nvim-tree").setup({
+    sort_by = "case_sensitive",
+    view = {
+        width = 30,
+        side = "right",
+    },
+    renderer = {
+        group_empty = true,
+    },
+    filters = {
+        dotfiles = true,
+    },
+})
+
+vim.keymap.set("n", "<C-n>", ":NvimTreeFindFileToggle<CR>")
+'
+
+# after/plugin/treesitter.lua
+create_lua_file "after/plugin/treesitter.lua" '
+require("nvim-treesitter.configs").setup {
+    ensure_installed = { "bash", "csv", "css", "lua", "dockerfile", "dot", "gitignore", "go", "gpg", "html", "json", "make", "nix", "python", "terraform", "rust", "javascript", "typescript", "c", "vim", "vimdoc", "query" },
+    sync_install = false,
+    auto_install = true,
+    highlight = {
+        enable = true,
+        additional_vim_regex_highlighting = false,
+    },
+}
+'
+
+# after/plugin/undotree.lua
+create_lua_file "after/plugin/undotree.lua" '
+vim.keymap.set("n", "<leader>u", vim.cmd.UndotreeToggle)
+'
+
+# Ensure correct permissions
+chown -R bender:bender "${NVIM_DIR}"
+
+echo "Neovim configuration setup completed."
+
+echo "Cleaning up..."
+rm -f /boot/firstrun.sh
+sed -i 's| systemd.run.*||g' /boot/cmdline.txt
+
+echo "Script execution completed."
+
+exit 0
+

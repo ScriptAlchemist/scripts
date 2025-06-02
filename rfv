@@ -14,7 +14,7 @@ for cmd in rg fzf nvim bat; do
 done
 
 rfv() (
-  RELOAD='reload:rg --column --color=always --smart-case {q} || :'
+  RELOAD='reload:rg --column --color=always --smart-case --ignore --glob "!yarn.lock" {q} || :'
   OPENER='if [[ $FZF_SELECT_COUNT -eq 0 ]]; then
             nvim {1} +{2}     # No selection. Open the current line in Vim.
           else
@@ -27,7 +27,7 @@ rfv() (
       --bind "ctrl-o:execute:$OPENER" \
       --bind 'alt-a:select-all,alt-d:deselect-all,ctrl-/:toggle-preview' \
       --delimiter : \
-      --preview 'bat --style=full --color=always --highlight-line {2} {1}' \
+      --preview 'bat --theme="Visual Studio Dark+" --style=full --color=always --highlight-line {2} {1}' \
       --preview-window '~4,+{2}+4/3,<80(up)' \
       --query "$*"
 )

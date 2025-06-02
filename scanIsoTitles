@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+
+# Define input directory and output text file
+input_dir=/Volumes/KatesFamily
+output_file=/Volumes/KatesFamily/iso_titles.txt
+
+# Clear or create the output file
+> "$output_file"
+
+# Loop through all ISO files in the input directory
+for iso_file in "$input_dir"/*.iso; do
+    # Check if any ISO files exist
+    if [ ! -f "$iso_file" ]; then
+        echo "No ISO files found in $input_dir."
+        exit 1
+    fi
+
+    # Extract the base filename (disk name) without extension
+    disk_name=$(basename "$iso_file" .iso)
+
+    echo "Processing ISO: $disk_name" | tee -a "$output_file"
+
+    # Mount the ISO
+    mount_point=$(hdiutil mount "$iso_file" | grep "Apple_HFS" | awk '{print $3}')
+    if [ -z "$mount_point" ]; then
+        echo "Failed to mount $iso_file" | tee -a "$output_file"
+        echo "----------------------------------------" >> "$output_file"
+        continue
+    fi
+
+    # Check for VIDEO_TS folder
+    if [ -d "$mount_point/VIDEO_TS" ]; then
+        echo "Found VIDEO_TS in $disk_name. Scanning for titles..." | tee -a "$output_file"
+
+        # Run HandBrakeCLI on the mounted VIDEO_TS directory
+        HandBrakeCLI -i "$mount_point" --scan 2>&1 | \
+        awk '/title [0-9]+:/,/duration/' >> "$output_file"
+    else
+        echo "No VIDEO_TS folder found in $disk_name." | tee -a "$output_file"
+    fi
+
+    # Unmount the ISO
+    hdiutil unmount "$mount_point" > /dev/null
+    echo "Unmounted $disk_name." | tee -a "$output_file"
+
+    # Add a separator for readability
+    echo "----------------------------------------" >> "$output_file"
+done
+
+echo "All scans completed. Results saved to $output_file."
+

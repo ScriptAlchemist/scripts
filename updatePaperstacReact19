@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# List of directories containing package.json
+folders=(
+  "apps/noteclosings-web"
+  "apps/paperstac-web"
+  "apps/partners-web"
+  "packages/api-site"
+  "packages/ink"
+  "packages/noteclosings"
+  "packages/routes"
+  "packages/shared-web"
+)
+
+# Navigate to each directory and run the commands
+for folder in "${folders[@]}"; do
+  echo "Updating packages in $folder"
+  cd ~/projects/paperstac/$folder || exit 1
+
+  # Add React 19 and its types
+  yarn add --exact react@^19.0.0 react-dom@^19.0.0
+  yarn add --exact @types/react@^19.0.0 @types/react-dom@^19.0.0
+
+  echo "Running Next.js codemod in $folder"
+
+  npx @next/codemod@canary upgrade latest -y
+
+  # Return to the base directory
+  cd - > /dev/null
+done
+
+echo "All packages have been updated."
+
